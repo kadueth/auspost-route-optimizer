@@ -614,8 +614,10 @@ async function calculateRoute() {
     status.className = 'status ok';
   }
 
-  renderResult();
+  // Troca de aba primeiro: o mapa precisa nascer com a aba já visível,
+  // senão o Leaflet mede o contêiner como 0x0 e o mapa fica em branco.
   document.querySelector('.tab-btn[data-tab="result"]').click();
+  renderResult();
 }
 
 // ---------- Render result ----------
@@ -656,6 +658,7 @@ function renderResult() {
     latlngs.push([p.lat, p.lon]);
   });
   routeLine = L.polyline(latlngs, { color: '#22c55e', weight: 3 }).addTo(mapInstance);
+  mapInstance.invalidateSize();
   mapInstance.fitBounds(latlngs, { padding: [30,30] });
 
   // List
