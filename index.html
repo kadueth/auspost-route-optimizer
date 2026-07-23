@@ -129,19 +129,32 @@
   .summary .stat { background: var(--panel2); padding: 8px 14px; border-radius: 8px; font-size: 13px; }
   .summary .stat b { display: block; font-size: 18px; color: var(--accent); }
   .small { font-size: 12px; color: var(--muted); }
+  .session-header {
+    display: flex; align-items: center; gap: 10px;
+    margin: 18px 0 8px 0; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .session-header:first-child { margin-top: 0; }
+  .session-badge {
+    background: var(--danger); color: white; font-weight: 700;
+    border-radius: 50%; width: 28px; height: 28px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .session-title { font-weight: 600; font-size: 14px; }
+  .session-note { margin: 2px 0 10px 38px; font-size: 12px; color: var(--muted); font-style: italic; }
 </style>
 </head>
 <body>
 
 <header>
   <div>
-    <h1>Rota de Entrega — Labrador</h1>
-    <div class="sub">Australia Post · Otimizador de rota gratuito (OpenStreetMap + OSRM)</div>
+    <h1>Rota de Entrega — Labrador 4215</h1>
+    <div class="sub">Australia Post · Sessões A-I · rota verificada na prática</div>
   </div>
   <div class="tabs">
     <button class="tab-btn active" data-tab="setup">1. Ruas fixas</button>
     <button class="tab-btn" data-tab="daily">2. Entrega de hoje</button>
-    <button class="tab-btn" data-tab="result">3. Rota otimizada</button>
+    <button class="tab-btn" data-tab="result">3. Rota do dia</button>
   </div>
 </header>
 
@@ -156,10 +169,10 @@
       <div class="row" style="margin-top:10px;">
         <button class="secondary" onclick="addStreetRow()">+ Adicionar rua</button>
         <button class="secondary" onclick="saveStreets()">Salvar lista</button>
-        <button onclick="loadDefaultStreets(false)">Carregar minha rota do Labrador (47 ruas)</button>
+        <button onclick="loadDefaultStreets(false)">Carregar minha rota do Labrador (50 ruas, sessões A-I)</button>
         <button class="danger" onclick="clearStreets()">Limpar tudo</button>
       </div>
-      <p class="small" style="margin-top:10px;">Dica: adicione as ruas na ordem aproximada que você costuma percorrer — ajuda a conferir a rota otimizada mais rápido.</p>
+      <p class="small" style="margin-top:10px;">A ordem das ruas é a que você já verificou na prática (sessões A-I) — a rota do dia sempre segue essa sequência, pulando só as ruas sem número digitado.</p>
       <div class="status" id="setupStatus"></div>
     </div>
   </div>
@@ -175,7 +188,7 @@
       </div>
       <input type="text" id="startAddress" placeholder="Ex: Labrador Post Office, Gold Coast QLD" style="width:100%; margin-top:6px;" />
       <div class="row" style="margin-top:14px;">
-        <button class="go" onclick="calculateRoute()">Calcular melhor rota</button>
+        <button class="go" onclick="calculateRoute()">Gerar rota do dia</button>
         <button class="danger" onclick="clearDailyNumbers()">Limpar números de hoje</button>
       </div>
       <div class="progress" id="progressBar"><div class="progress-bar" id="progressFill"></div></div>
@@ -223,10 +236,11 @@ function loadStreets() {
   } catch { return []; }
 }
 
-function addStreetRow(street = '', suburb = 'Labrador QLD, Australia', hint = '') {
+function addStreetRow(street = '', suburb = 'Labrador QLD, Australia', hint = '', session = '') {
   const list = document.getElementById('streetList');
   const row = document.createElement('div');
   row.className = 'street-row';
+  row.dataset.session = session;
   row.innerHTML = `
     <input type="text" class="street-name" placeholder="Nome da rua (ex: Frank St)" value="${escapeHtml(street)}" />
     <input type="text" class="street-suburb" placeholder="Suburb/cidade" value="${escapeHtml(suburb)}" />
@@ -234,70 +248,131 @@ function addStreetRow(street = '', suburb = 'Labrador QLD, Australia', hint = ''
     <button class="danger" onclick="this.parentElement.remove()">Remover</button>
   `;
   list.appendChild(row);
+  return row;
 }
 
-// Rota fixa do Labrador informada pelo usuário, na ordem em que percorre as ruas
+// Metadados das sessões A-I, extraídos do PDF "Rota Labrador 4215 - versão 3 (verificada)"
+const SESSIONS = {
+  A: { title: 'Marine Pde e nordeste', entrada: 'Chegando pela Brisbane Rd, vire à direita na Marine Pde (canto do nº 10)', saida: 'A Broad St te deixa perto da Gordon St (Sessão B)' },
+  B: { title: 'Canto sudeste', entrada: 'Da Broad St, siga para a Gordon St', saida: 'Da Muir, ~350m a oeste até o pé da Turpin (nº 160)' },
+  C: { title: 'Turpin Rd subindo', entrada: 'Comece no nº 160 e suba a Turpin entregando (160-234 / 169-235)', saida: 'Termina no nº 234 (quadras de squash), na Brisbane Rd' },
+  D: { title: 'Brisbane Rd sentido oeste', entrada: 'Do topo da Turpin, ~300m a leste até o nº 10 (canto da Marine)', saida: 'Termina no nº 62, esquina da Government Rd' },
+  E: { title: 'Topo noroeste', entrada: 'A Government Rd começa aqui (nº 6, na esquina da Brisbane)', saida: 'Continue descendo a Government Rd para o sul' },
+  F: { title: 'Government Rd descendo', entrada: 'Siga a Government para o sul entregando (6-120, lado leste, caixas à esquerda)', saida: 'Termina no nº 120, esquina da Whiting St' },
+  G: { title: 'Whiting St e cortes', entrada: 'Comece no nº 120 e vá entregando para o oeste (120-198 / 117-195)', saida: 'Termina no nº 198, na ponta oeste' },
+  H: { title: 'Oeste', entrada: 'A Coventry fica colada na ponta da Whiting', saida: 'Da Koonwarra, suba para o bolsão da Kenny Dr' },
+  I: { title: 'Kenny Dr e chegada', entrada: 'Entre pelo lado da Calvary e atravesse o bolsão até a Olsen Ave', saida: 'CHEGADA: Correio Labrador - 241 Central St (~450m pela Olsen Ave)' },
+};
+
+// Rota fixa e verificada do Labrador 4215, sessões A-I, na ordem exata do PDF do usuário
 const DEFAULT_STREETS = [
-  { name: 'Brown St', hint: '' },
-  { name: 'Avi Ct', hint: '' },
-  { name: 'Stephanie Ct', hint: '' },
-  { name: 'Jenaya Pl', hint: '' },
-  { name: 'Kenny Dr', hint: '' },
-  { name: 'Calvary Ct', hint: '' },
-  { name: 'Clovelly Pl', hint: '' },
-  { name: 'Jannie Ct', hint: '' },
-  { name: 'Annette Ct', hint: '' },
-  { name: 'Liam', hint: '' },
-  { name: 'Freeman St', hint: '' },
-  { name: 'Riccarton Pl', hint: '' },
-  { name: 'Coventry Ct', hint: '' },
-  { name: 'Whiting', hint: '120-198, 117-195' },
-  { name: 'Millewa Ct', hint: '' },
-  { name: 'Myuna Ct', hint: '' },
-  { name: 'Pomona Tce', hint: '' },
-  { name: 'Koonwarra St', hint: '' },
-  { name: 'Pebble Row', hint: '' },
-  { name: 'Catherine Ct', hint: '' },
-  { name: 'Gemma Glade', hint: '' },
-  { name: 'Muir St', hint: '164+, 163+' },
-  { name: 'Imperial Av', hint: '' },
-  { name: 'Turpin Rd', hint: '160-234, 169-235' },
-  { name: 'Gordon St', hint: '' },
-  { name: 'Coral Ave', hint: '' },
-  { name: 'Broat St', hint: '' },
-  { name: 'Fergunson Ave', hint: '' },
-  { name: 'Wynflo St', hint: '' },
-  { name: 'Billington', hint: '' },
-  { name: 'Clinton St', hint: '' },
-  { name: 'Teresa Lane', hint: '' },
-  { name: 'Penrock Pde', hint: '' },
-  { name: 'Nevenia St', hint: '' },
-  { name: 'Fitch Lane', hint: '' },
-  { name: 'Hilltop St', hint: '' },
-  { name: 'Parker St', hint: '' },
-  { name: 'Middle St', hint: '' },
-  { name: 'Bath St', hint: '' },
-  { name: 'Sutherland Ave', hint: '' },
-  { name: 'Marine Pde', hint: '378, 388, 372, 370, 392' },
-  { name: 'Brisbane Rd', hint: '10-62' },
-  { name: 'Government Rd', hint: '6-120' },
-  { name: 'Beitz Ave', hint: '' },
-  { name: 'Mcwilliam Cl', hint: '' },
-  { name: 'Harley St', hint: '' },
-  { name: 'Brookside Ed', hint: '' },
-  { name: 'Kenmar St', hint: '' },
-  { name: 'Ashton St', hint: '' },
-  { name: 'Monarch St', hint: '' },
+  { session: 'A', name: 'Marine Pde', hint: 'somente 370, 372, 378, 388 e 392 (388 = prédio Golden Sands)' },
+  { session: 'A', name: 'Bath St', hint: '' },
+  { session: 'A', name: 'Parker St', hint: '' },
+  { session: 'A', name: 'Middle St', hint: '' },
+  { session: 'A', name: 'Sutherland Ave', hint: '' },
+  { session: 'A', name: 'Broad St', hint: '' },
+
+  { session: 'B', name: 'Gordon St', hint: 'Labrador State School aqui — zona 40km/h, 8h15-9h e 14h45-15h30' },
+  { session: 'B', name: 'Monarch La', hint: '' },
+  { session: 'B', name: 'Coral Ave', hint: '' },
+  { session: 'B', name: 'Imperial Pde', hint: '' },
+  { session: 'B', name: 'Muir St', hint: 'só ponta norte: 164+ / 163+' },
+
+  { session: 'C', name: 'Turpin Rd', hint: '160-234 e 169-235, do sul para o norte' },
+  { session: 'C', name: 'Clinton St', hint: '' },
+  { session: 'C', name: 'Hilltop St', hint: '' },
+  { session: 'C', name: 'Billington St', hint: '' },
+  { session: 'C', name: 'Penrock Pde', hint: '' },
+  { session: 'C', name: 'Fitch Ln', hint: '' },
+  { session: 'C', name: 'Teresa Ln', hint: '' },
+
+  { session: 'D', name: 'Brisbane Rd', hint: '10-62, SOMENTE PARES lado sul, sentido oeste (ímpares são de Biggera Waters)' },
+
+  { session: 'E', name: 'Nevenia St', hint: '' },
+  { session: 'E', name: 'Ashton St', hint: '' },
+  { session: 'E', name: 'Harley St', hint: '' },
+  { session: 'E', name: 'Kenmar St', hint: '' },
+  { session: 'E', name: 'Brookside Rd', hint: '' },
+
+  { session: 'F', name: 'Government Rd', hint: '6-120, de norte a sul, pares lado leste, caixas à esquerda' },
+  { session: 'F', name: 'Ferguson Ave', hint: '' },
+  { session: 'F', name: 'McWilliam Cl', hint: '' },
+  { session: 'F', name: 'Beitz Ave', hint: '' },
+  { session: 'F', name: 'Wynflo St', hint: '' },
+
+  { session: 'G', name: 'Whiting St', hint: '120-198 e 117-195, de leste a oeste' },
+  { session: 'G', name: 'Gemma Glade', hint: '' },
+  { session: 'G', name: 'Jenaya Pl', hint: '' },
+  { session: 'G', name: 'Catherine Ct', hint: '' },
+  { session: 'G', name: 'Stephanie Ct', hint: '' },
+  { session: 'G', name: 'Avi Ct', hint: '' },
+  { session: 'G', name: 'Brown St', hint: '' },
+  { session: 'G', name: 'Pomona Tce', hint: '' },
+  { session: 'G', name: 'Myuna Ct', hint: '' },
+  { session: 'G', name: 'Millewa Ct', hint: '' },
+
+  { session: 'H', name: 'Coventry Ct', hint: '' },
+  { session: 'H', name: 'Freeman St', hint: '' },
+  { session: 'H', name: 'Pebble Row', hint: '' },
+  { session: 'H', name: 'Koonwarra St', hint: '' },
+
+  { session: 'I', name: 'Calvary Ct', hint: '' },
+  { session: 'I', name: 'Clovelly Pl', hint: '' },
+  { session: 'I', name: 'Kenny Dr', hint: '' },
+  { session: 'I', name: 'Jannie Ct', hint: '' },
+  { session: 'I', name: 'Liam Ct', hint: '' },
+  { session: 'I', name: 'Annette Ct', hint: '' },
+  { session: 'I', name: 'Riccarton Pl', hint: 'ÚLTIMA RUA — mais perto do correio' },
 ].map(s => ({ ...s, suburb: 'Labrador QLD, Australia' }));
 
+function buildSessionHeader(letter) {
+  const meta = SESSIONS[letter] || {};
+  const div = document.createElement('div');
+  div.className = 'session-header';
+  div.innerHTML = `
+    <div class="session-badge">${escapeHtml(letter)}</div>
+    <div>
+      <div class="session-title">Sessão ${escapeHtml(letter)} · ${escapeHtml(meta.title || '')}</div>
+      ${meta.entrada ? `<div class="small">Entrada: ${escapeHtml(meta.entrada)}</div>` : ''}
+    </div>
+  `;
+  return div;
+}
+
+function appendSessionExitNote(container, letter) {
+  const meta = SESSIONS[letter];
+  if (!meta || !meta.saida) return;
+  const note = document.createElement('div');
+  note.className = 'session-note';
+  note.textContent = `Saída: ${meta.saida}`;
+  container.appendChild(note);
+}
+
+function renderStreetsGrouped(streets) {
+  const list = document.getElementById('streetList');
+  list.innerHTML = '';
+  let lastSession = null;
+  streets.forEach((s, i) => {
+    if (s.session && s.session !== lastSession) {
+      lastSession = s.session;
+      list.appendChild(buildSessionHeader(s.session));
+    }
+    addStreetRow(s.name, s.suburb, s.hint, s.session);
+    const next = streets[i + 1];
+    if (s.session && (!next || next.session !== s.session)) {
+      appendSessionExitNote(list, s.session);
+    }
+  });
+}
+
 function loadDefaultStreets(force) {
-  if (!force && !confirm(`Isso vai substituir sua lista atual pelas ${DEFAULT_STREETS.length} ruas do Labrador que você informou. Continuar?`)) return;
+  if (!force && !confirm(`Isso vai substituir sua lista atual pelas ${DEFAULT_STREETS.length} ruas do Labrador (sessões A-I). Continuar?`)) return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_STREETS));
-  document.getElementById('streetList').innerHTML = '';
-  DEFAULT_STREETS.forEach(s => addStreetRow(s.name, s.suburb, s.hint));
+  renderStreetsGrouped(DEFAULT_STREETS);
   dailyListRendered = false;
   const status = document.getElementById('setupStatus');
-  status.textContent = `Carregado! ${DEFAULT_STREETS.length} ruas da sua rota do Labrador.`;
+  status.textContent = `Carregado! ${DEFAULT_STREETS.length} ruas, sessões A-I.`;
   status.className = 'status ok';
 }
 
@@ -312,7 +387,8 @@ function saveStreets() {
     const name = row.querySelector('.street-name').value.trim();
     const suburb = row.querySelector('.street-suburb').value.trim();
     const hint = row.querySelector('.street-hint').value.trim();
-    if (name) streets.push({ name, suburb, hint });
+    const session = row.dataset.session || '';
+    if (name) streets.push({ name, suburb, hint, session });
   });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(streets));
   dailyListRendered = false;
@@ -333,7 +409,7 @@ function initSetup() {
   if (streets.length === 0) {
     loadDefaultStreets(true);
   } else {
-    streets.forEach(s => addStreetRow(s.name, s.suburb, s.hint));
+    renderStreetsGrouped(streets);
   }
 }
 
@@ -358,7 +434,7 @@ function renderDailyList() {
   const container = document.getElementById('dailyList');
 
   // Don't wipe user input if the street list hasn't changed since last render
-  if (dailyListRendered && container.children.length === streets.length) return;
+  if (dailyListRendered && parseInt(container.dataset.count, 10) === streets.length) return;
 
   const savedNumbers = loadDailyNumbers();
   container.innerHTML = '';
@@ -367,19 +443,32 @@ function renderDailyList() {
     dailyListRendered = false;
     return;
   }
+  let lastSession = null;
+  let posInSession = 0;
   streets.forEach((s, i) => {
+    if (s.session && s.session !== lastSession) {
+      lastSession = s.session;
+      posInSession = 0;
+      container.appendChild(buildSessionHeader(s.session));
+    }
+    posInSession++;
     const row = document.createElement('div');
     row.className = 'street-row';
     row.innerHTML = `
-      <div style="flex:1; min-width:140px;"><b>${i+1}. ${escapeHtml(s.name)}</b><div class="small">${escapeHtml(s.suburb)}${s.hint ? ' · faixa usual: ' + escapeHtml(s.hint) : ''}</div></div>
+      <div style="flex:1; min-width:140px;"><b>${s.session ? posInSession : i+1}. ${escapeHtml(s.name)}</b><div class="small">${escapeHtml(s.suburb)}${s.hint ? ' · ' + escapeHtml(s.hint) : ''}</div></div>
       <textarea class="nums" data-idx="${i}" data-street="${escapeHtml(s.name)}" placeholder="Ex: 12, 14, 18, 21">${escapeHtml(savedNumbers[s.name] || '')}</textarea>
     `;
     container.appendChild(row);
+    const next = streets[i + 1];
+    if (s.session && (!next || next.session !== s.session)) {
+      appendSessionExitNote(container, s.session);
+    }
   });
   container.querySelectorAll('.nums').forEach(ta => {
     ta.addEventListener('input', () => saveDailyNumber(ta.dataset.street, ta.value));
   });
   dailyListRendered = true;
+  container.dataset.count = streets.length;
 }
 
 function clearDailyNumbers() {
@@ -401,80 +490,15 @@ async function geocode(query) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ---------- TSP: Nearest Neighbor + 2-opt ----------
+// ---------- Distance (for the km estimate shown in the result) ----------
 function distance(a, b) {
-  // Haversine distance in km, used for quick local ordering pre-OSRM
+  // Haversine distance in km
   const R = 6371;
   const dLat = (b.lat - a.lat) * Math.PI / 180;
   const dLon = (b.lon - a.lon) * Math.PI / 180;
   const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
   const x = Math.sin(dLat/2)**2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
-}
-
-function buildDistanceMatrix(points) {
-  const n = points.length;
-  const m = Array.from({length:n}, () => new Array(n).fill(0));
-  for (let i=0;i<n;i++) for (let j=i+1;j<n;j++) {
-    const d = distance(points[i], points[j]);
-    m[i][j] = d; m[j][i] = d;
-  }
-  return m;
-}
-
-function nearestNeighborRoute(matrix, startIdx) {
-  const n = matrix.length;
-  const visited = new Array(n).fill(false);
-  const route = [startIdx];
-  visited[startIdx] = true;
-  let current = startIdx;
-  for (let k=1; k<n; k++) {
-    let best = -1, bestD = Infinity;
-    for (let j=0;j<n;j++) {
-      if (!visited[j] && matrix[current][j] < bestD) { bestD = matrix[current][j]; best = j; }
-    }
-    route.push(best);
-    visited[best] = true;
-    current = best;
-  }
-  return route;
-}
-
-function routeLength(route, matrix) {
-  let total = 0;
-  for (let i=0;i<route.length-1;i++) total += matrix[route[i]][route[i+1]];
-  return total;
-}
-
-function twoOpt(route, matrix, maxIterations = 400) {
-  let improved = true;
-  let iter = 0;
-  const n = route.length;
-  while (improved && iter < maxIterations) {
-    improved = false;
-    iter++;
-    for (let i=1; i<n-2; i++) {
-      for (let j=i+1; j<n-1; j++) {
-        const a = route[i-1], b = route[i], c = route[j], d = route[j+1];
-        const before = matrix[a][b] + matrix[c][d];
-        const after = matrix[a][c] + matrix[b][d];
-        if (after < before - 1e-9) {
-          // reverse segment i..j
-          let lo = i, hi = j;
-          while (lo < hi) { [route[lo], route[hi]] = [route[hi], route[lo]]; lo++; hi--; }
-          improved = true;
-        }
-      }
-    }
-  }
-  return route;
-}
-
-function optimizeOrder(points, startIdx) {
-  const matrix = buildDistanceMatrix(points);
-  let route = nearestNeighborRoute(matrix, startIdx);
-  route = twoOpt(route, matrix);
-  return route;
 }
 
 // ---------- Main calculation flow ----------
@@ -553,19 +577,16 @@ async function calculateRoute() {
     return;
   }
 
-  status.textContent = `Otimizando ordem de ${points.length} parada(s)...`;
-
-  const startIdx = hasStart ? 0 : 0;
-  const routeOrder = optimizeOrder(points, startIdx);
-
+  // Sem TSP: a ordem já é a das sessões A-I (verificada na prática), então
+  // basta seguir a ordem em que os pontos foram geocodificados.
   lastPoints = points;
-  lastRoute = routeOrder;
+  lastRoute = points.map((_, i) => i);
 
   if (failed.length) {
     status.textContent = `Rota pronta. ${failed.length} endereço(s) não encontrados: ${failed.join('; ')}`;
     status.className = 'status error';
   } else {
-    status.textContent = `Rota otimizada com sucesso! ${points.length} paradas.`;
+    status.textContent = `Rota do dia pronta! ${points.length} paradas, na ordem das sessões A-I.`;
     status.className = 'status ok';
   }
 
