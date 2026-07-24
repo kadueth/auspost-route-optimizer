@@ -179,6 +179,7 @@
     <button class="tab-btn active" data-tab="setup">1. Ruas fixas</button>
     <button class="tab-btn" data-tab="daily">2. Entrega de hoje</button>
     <button class="tab-btn" data-tab="result">3. Rota do dia</button>
+    <button class="tab-btn" data-tab="summary">4. Resumo por rua</button>
   </div>
 </header>
 
@@ -233,6 +234,18 @@
         </div>
       </div>
       <div class="nav-links" id="navLinks"></div>
+    </div>
+  </div>
+
+  <!-- TAB 4: STREET SUMMARY -->
+  <div class="panel" id="tab-summary">
+    <div class="card">
+      <h2>Resumo da rota por rua</h2>
+      <p class="small">Ordem de entrega, agrupada por rua — pronto pra seguir ou imprimir.</p>
+      <ol class="stop-list" id="streetSummaryList">
+        <li class="small">Gere a rota do dia primeiro (aba "3. Rota do dia").</li>
+      </ol>
+      <button onclick="copyStreetSummary()" style="margin-top:12px;">Copiar resumo</button>
     </div>
   </div>
 
@@ -618,6 +631,60 @@ async function calculateRoute() {
   // senão o Leaflet mede o contêiner como 0x0 e o mapa fica em branco.
   document.querySelector('.tab-btn[data-tab="result"]').click();
   renderResult();
+  renderStreetSummary();
+}
+
+// ---------- Street summary (grouped by street, in route order) ----------
+function groupPointsByStreet() {
+  const orderedPoints = lastRoute.map(i => lastPoints[i]);
+  const sessionByName = {};
+  loadStreets().forEach(s => { sessionByName[s.name] = s.session; });
+
+  const groups = [];
+  orderedPoints.forEach(p => {
+    if (p.isStart) {
+      groups.push({ isStart: true, label: p.label });
+      return;
+    }
+    const last = groups[groups.length - 1];
+    if (last && !last.isStart && last.street === p.street) {
+      last.numbers.push(p.number);
+    } else {
+      groups.push({ street: p.street, numbers: [p.number], session: sessionByName[p.street] || '' });
+    }
+  });
+  return groups;
+}
+
+function renderStreetSummary() {
+  const groups = groupPointsByStreet();
+  const list = document.getElementById('streetSummaryList');
+  list.innerHTML = '';
+  let n = 0;
+  groups.forEach(g => {
+    const li = document.createElement('li');
+    if (g.isStart) {
+      li.innerHTML = `<span class="badge" style="background:var(--accent);">P</span> <span><i>${escapeHtml(g.label)}</i></span>`;
+    } else {
+      n++;
+      const sessionTag = g.session
+        ? `<span class="session-badge" style="width:20px; height:20px; font-size:10px;">${escapeHtml(g.session)}</span>`
+        : '';
+      li.innerHTML = `<span class="badge">${n}</span>${sessionTag}<span><b>${escapeHtml(g.street)}</b> — ${g.numbers.map(escapeHtml).join(', ')}</span>`;
+    }
+    list.appendChild(li);
+  });
+}
+
+function copyStreetSummary() {
+  const groups = groupPointsByStreet();
+  let n = 0;
+  const lines = groups.map(g => {
+    if (g.isStart) return g.label;
+    n++;
+    return `${n}. ${g.street} — ${g.numbers.join(', ')}`;
+  });
+  navigator.clipboard.writeText(lines.join('\n')).then(() => alert('Resumo copiado!'));
 }
 
 // ---------- Render result ----------
